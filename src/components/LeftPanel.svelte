@@ -16,59 +16,44 @@
     const gridSize = 8;
     const cellSize = 1;
 
-    // ========== 宇宙テーマ用ユーティリティ ==========
-    // 決定的な2Dノイズ（シードはx,zに依存）
+    // ===== 宇宙テーマ：高さノイズ =====
     function hash2d(x, z) {
-        // 0..1 の値に正規化された疑似乱数
         const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
         return s - Math.floor(s);
     }
-    function smoothstep(t) {
-        return t * t * (3.0 - 2.0 * t);
-    }
-    // 連続性のある簡易バリューノイズ
+    function smoothstep(t) { return t * t * (3.0 - 2.0 * t); }
     function valueNoise2D(x, z) {
         const xi = Math.floor(x), zi = Math.floor(z);
         const xf = x - xi,        zf = z - zi;
-
         const a = hash2d(xi,     zi);
         const b = hash2d(xi + 1, zi);
         const c = hash2d(xi,     zi + 1);
         const d = hash2d(xi + 1, zi + 1);
-
         const u = smoothstep(xf);
         const v = smoothstep(zf);
-
         const ab = a * (1 - u) + b * u;
         const cd = c * (1 - u) + d * u;
         return ab * (1 - v) + cd * v; // 0..1
     }
-    // タイル高さ（振幅は控えめに）
     function getTileHeight(x, z) {
-        // グリッド中央を原点にスケールを少し縮めて滑らかさUP
         const sx = (x - gridSize / 2 + 0.5) * 0.7;
         const sz = (z - gridSize / 2 + 0.5) * 0.7;
-
-        // 2オクターブほど重ねてコントラストを出す
         const n1 = valueNoise2D(sx * 0.6, sz * 0.6);
         const n2 = valueNoise2D(sx * 1.2, sz * 1.2);
-        const n = (n1 * 0.7 + n2 * 0.3); // 0..1
-
-        const amplitude = 0.18; // 高低差の最大量（お好みで 0.1〜0.3）
-        const centerBias = -0.06; // 全体をやや沈めてSF感
-        return (n - 0.5) * 2 * amplitude + centerBias; // -amp..+amp付近
+        const n = (n1 * 0.7 + n2 * 0.3);
+        const amplitude = 0.18;
+        const centerBias = -0.06;
+        return (n - 0.5) * 2 * amplitude + centerBias;
     }
 
-    // 星パーティクル生成
-    function createStars(count = 2000, radius = 80) {
+    // ===== 星空 =====
+    function createStars(count = 2200, radius = 90) {
         const geom = new THREE.BufferGeometry();
         const positions = new Float32Array(count * 3);
         for (let i = 0; i < count; i++) {
-            // 球殻上にランダム配置
             const phi = Math.acos(2 * Math.random() - 1);
             const theta = 2 * Math.PI * Math.random();
-            const r = radius * (0.6 + Math.random() * 0.4); // ばらけさせる
-
+            const r = radius * (0.6 + Math.random() * 0.4);
             positions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
             positions[i * 3 + 1] = r * Math.cos(phi);
             positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
@@ -84,33 +69,19 @@
         return new THREE.Points(geom, mat);
     }
 
-    // ========== モデルURL & ローダ ==========
+    // ===== モデル =====
     const placementModelUrls = {
-        model1:
-            'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/robo1.glb',
-        model2:
-            'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/robo2.glb',
-        model3:
-            'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/robo3.glb'
+        model1: 'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/robo1.glb',
+        model2: 'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/robo2.glb',
+        model3: 'https://qsbkq9revdprke1d.public.blob.vercel-storage.com/redecorate/burn.glb'
     };
-
     function loadModel(url) {
         return new Promise((resolve, reject) => {
             const loader = new GLTFLoader();
-            loader.load(
-                url,
-                (gltf) => resolve(gltf.scene),
-                undefined,
-                (error) => {
-                    console.error('モデルロード中にエラーが発生しました:', error);
-                    reject(error);
-                }
-            );
+            loader.load(url, (gltf) => resolve(gltf.scene), undefined, (e) => reject(e));
         });
     }
-
     const modelCache = { model1: null, model2: null, model3: null };
-
     async function preloadModels() {
         try {
             const [m1, m2, m3] = await Promise.all([
@@ -122,146 +93,125 @@
             modelCache.model2 = m2;
             modelCache.model3 = m3;
             console.log('すべてのモデルをプリロードしました');
-        } catch (e) {
-            console.error('モデルのプリロード中にエラー:', e);
-        }
+        } catch (e) { console.error('モデルのプリロード中にエラー:', e); }
     }
-
     async function createStateObject(state) {
         if (state === 0) return null;
-
         let modelType, rotationDegrees;
-        if (state >= 1 && state <= 4) {
-            modelType = 'model1';
-            rotationDegrees = (state - 1) * 90;
-        } else if (state >= 5 && state <= 8) {
-            modelType = 'model2';
-            rotationDegrees = (state - 5) * 90;
-        } else if (state >= 9 && state <= 12) {
-            modelType = 'model3';
-            rotationDegrees = (state - 9) * 90;
-        } else {
-            return null;
-        }
+        if (state >= 1 && state <= 4) { modelType = 'model1'; rotationDegrees = (state - 1) * 90; }
+        else if (state >= 5 && state <= 8) { modelType = 'model2'; rotationDegrees = (state - 5) * 90; }
+        else if (state >= 9 && state <= 12) { modelType = 'model3'; rotationDegrees = (state - 9) * 90; }
+        else return null;
 
-        const fromCache = modelCache[modelType];
-        let baseModel = fromCache ? fromCache : await loadModel(placementModelUrls[modelType]).then(m => (modelCache[modelType] = m));
+        const baseModel = modelCache[modelType] ?? (modelCache[modelType] = await loadModel(placementModelUrls[modelType]));
         if (!baseModel) return null;
-
         const model = baseModel.clone();
         model.rotation.y = THREE.MathUtils.degToRad(rotationDegrees);
         return model;
     }
-
     async function updateGridObjects(states) {
         if (!isInitialized || !scene) return;
-
         for (let i = 0; i < states.length; i++) {
             const state = states[i];
             const x = i % gridSize;
             const z = Math.floor(i / gridSize);
             const idx = z * gridSize + x;
-
-            // 既存モデル削除
             if (gridObjects[idx]) {
                 scene.remove(gridObjects[idx]);
                 gridObjects[idx] = null;
             }
-
             const newObject = await createStateObject(state);
             if (newObject) {
-                // モデルのスケール
                 newObject.scale.set(0.5, 0.5, 0.5);
-
-                // 高さを計算
                 const bbox = new THREE.Box3().setFromObject(newObject);
                 const modelH = bbox.max.y - bbox.min.y;
-
                 const tileY = cellHeights[idx] ?? 0;
-
-                // 位置（セルの高さに追従）
                 newObject.position.set(
                     x - gridSize / 2 + 0.5,
                     tileY + modelH * 0.5,
                     z - gridSize / 2 + 0.5
                 );
-
                 scene.add(newObject);
                 gridObjects[idx] = newObject;
             }
         }
     }
-
-    // リアクティブ反映
-    $: if (isInitialized) {
-        updateGridObjects($gridState);
-    }
+    $: if (isInitialized) { updateGridObjects($gridState); }
 
     onMount(() => {
-        // シーン
+        // === シーン ===
         scene = new THREE.Scene();
-        // 宇宙色（とても暗い青）
-        scene.background = new THREE.Color(0x030611);
-        scene.fog = new THREE.FogExp2(0x030611, 0.035);
+        scene.background = new THREE.Color(0x0a1222);         // 少し明るい宇宙色
+        scene.fog = new THREE.FogExp2(0x0a1222, 0.02);        // 霧を薄く
 
-        // カメラ
-        camera = new THREE.PerspectiveCamera(
-            60,
-            1, // 初期値。あとでリサイズで更新
-            0.1,
-            1000
-        );
-
-        // レンダラー
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.setSize(container.clientWidth, container.clientHeight);
-        renderer.shadowMap.enabled = true;
-        container.appendChild(renderer.domElement);
-
-        // カメラ位置
+        // === カメラ ===
+        camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
         camera.position.set(0, 9.5, 10.5);
         camera.lookAt(0, 0, 0);
 
-        // 操作
+        // === レンダラー ===
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.45; // 明るめ
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        // === 操作 ===
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.06;
         controls.target.set(0, 0, 0);
 
-        // ライト（クール寄り）
-        const dirLight = new THREE.DirectionalLight(0xbfdcff, 1.1);
-        dirLight.position.set(6, 10, 4);
-        dirLight.castShadow = true;
-        scene.add(dirLight);
+        // === ライティング（明るく見やすく） ===
+        const hemi = new THREE.HemisphereLight(0xbfdcff, 0x0b0f16, 0.9); // sky, ground
+        scene.add(hemi);
 
-        const ambientLight = new THREE.AmbientLight(0x4e5a6a, 0.55);
-        scene.add(ambientLight);
+        const key = new THREE.DirectionalLight(0xffffff, 2.2);
+        key.position.set(6, 12, 6);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        scene.add(key);
 
-        // 床（暗色で微反射）
+        const fill = new THREE.DirectionalLight(0x9fc7ff, 1.1);
+        fill.position.set(-8, 6, -2);
+        scene.add(fill);
+
+        const rim = new THREE.DirectionalLight(0x88aaff, 1.0);
+        rim.position.set(-2, 8, 8);
+        scene.add(rim);
+
+        const spot = new THREE.SpotLight(0xffffff, 1.2, 0, Math.PI / 5, 0.35, 1.0);
+        spot.position.set(0, 12, 0);
+        spot.target.position.set(0, 0, 0);
+        spot.castShadow = true;
+        spot.shadow.mapSize.set(1024, 1024);
+        scene.add(spot);
+        scene.add(spot.target);
+
+        // === ベース面 ===
         const planeGeometry = new THREE.PlaneGeometry(gridSize, gridSize);
         const planeMaterial = new THREE.MeshStandardMaterial({
             color: 0x0b0f16,
-            metalness: 0.6,
-            roughness: 0.4,
+            metalness: 0.55,   // 少しだけ上げる
+            roughness: 0.35,   // 少しだけ下げる
             side: THREE.DoubleSide
         });
         const basePlane = new THREE.Mesh(planeGeometry, planeMaterial);
         basePlane.rotation.x = Math.PI / 2;
         basePlane.receiveShadow = true;
-        basePlane.position.y = -0.15; // タイルの最低より少し下に
+        basePlane.position.y = -0.15; // タイルの最低より下
         scene.add(basePlane);
 
-        // プレート（セル）を作成：色はSFっぽいダークグレー＋弱発光
+        // === プレート（セル） ===
         const cellGeom = new THREE.PlaneGeometry(cellSize * 0.95, cellSize * 0.95);
-
         cellMeshes = [];
         cellHeights = [];
-
         for (let x = 0; x < gridSize; x++) {
             for (let z = 0; z < gridSize; z++) {
                 const idx = z * gridSize + x;
-
                 const tileY = getTileHeight(x, z);
                 cellHeights[idx] = tileY;
 
@@ -273,7 +223,7 @@
                 const cellMat = new THREE.MeshStandardMaterial({
                     color: tileColor,
                     emissive: new THREE.Color(0x0a1220),
-                    emissiveIntensity: 0.25,
+                    emissiveIntensity: 0.40, // 視認性UP
                     metalness: 0.5,
                     roughness: 0.6,
                     side: THREE.DoubleSide
@@ -287,40 +237,31 @@
                     z - gridSize / 2 + 0.5
                 );
                 cell.receiveShadow = true;
-
                 scene.add(cell);
+
                 cellMeshes[idx] = cell;
-                gridObjects[idx] = null; // モデル領域初期化
+                gridObjects[idx] = null;
             }
         }
 
-        // 星空を追加
+        // === 星空 ===
         stars = createStars(2200, 90);
         scene.add(stars);
 
-        // モデルをプリロード
+        // === モデルプリロード & 初期反映 ===
         preloadModels();
-
-        // 初期化完了
         isInitialized = true;
-
-        // 初期反映
         updateGridObjects($gridState);
 
-        // アニメーション
+        // === ループ ===
         function animate() {
             requestAnimationFrame(animate);
-
-            // 星をゆっくり回転させて宇宙感を出す
-            if (stars) {
-                stars.rotation.y += 0.0006;
-            }
-
+            if (stars) stars.rotation.y += 0.0006; // ゆっくり回転
             controls.update();
             renderer.render(scene, camera);
         }
 
-        // リサイズ
+        // === リサイズ ===
         function handleResize() {
             const w = container.clientWidth;
             const h = container.clientHeight;
@@ -329,12 +270,10 @@
             renderer.setSize(w, h);
         }
         window.addEventListener('resize', handleResize);
-
-        // 初回に正しいアスペクトへ
         handleResize();
         animate();
 
-        // クリーンアップ
+        // === クリーンアップ ===
         return () => {
             window.removeEventListener('resize', handleResize);
             if (container && renderer?.domElement && container.contains(renderer.domElement)) {
@@ -357,7 +296,6 @@
         flex-direction: column;
         background: radial-gradient(1200px 600px at 50% -10%, rgba(35, 54, 92, 0.25), transparent 60%);
     }
-
     .canvas-container {
         flex-grow: 1;
         min-height: 300px;
